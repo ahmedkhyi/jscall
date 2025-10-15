@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shift Tracker</title>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<style>
+  body {
+    margin: 0;
+    font-family: Poppins, sans-serif;
+    background: #f4f6f8;
+    display: flex;
+    justify-content: center;
+    padding: 30px;
+  }
+
+  .card {
+    width: 420px;
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  h2 { margin: 0 0 12px 0; text-align: center; }
+  input { width:100%; padding:10px; margin:6px 0; border-radius:8px; border:1px solid #ddd; }
+  .btn { width:100%; padding:10px; margin-top:10px; border:none; border-radius:8px; background:#007bff; color:#fff; font-weight:600; cursor:pointer; }
+  #loginError { color:red; text-align:center; display:none; margin-top:6px; }
+
+  #agentName { text-align:center; font-weight:700; margin-bottom:8px; font-size:1.1rem; }
+  #clock { text-align:center; font-size:28px; font-weight:700; color:#111; margin-bottom:6px; }
+  #statusLine { width:100%; margin-bottom:10px; text-align:center; }
+  #statusText { font-weight:600; color:#333; }
+
+  .buttons { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:10px; }
+  .btn-status { min-width:110px; padding:10px; border:none; border-radius:8px; color:#fff; font-weight:700; cursor:pointer; transition: transform 0.15s ease; }
+  .btn-status:hover { transform: scale(1.05); }
+
+  .prod { background: green; }
+  .pause { background: goldenrod; color:#111; }
+  .formation { background: #0b79ff; }
+  .brief { background: #ff8c00; }
+  .deco { background: crimson; }
+
+  .inactive { opacity:0.35; }
+
+  #totalsBar { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid #e6e6e6; padding:10px; display:flex; justify-content:space-around; font-weight:700; }
+  #totalsBar div { white-space:nowrap; font-size:0.95rem; color:#222; }
+
+  #liveInfo { text-align:center; color:#444; font-size:0.95rem; margin-bottom:10px; }
+
+  /* Déconnecté en bas */
+  .logout-container { position:fixed; bottom:80px; left:50%; transform:translateX(-50%); width:160px; text-align:center; }
+  .logout-container .btn-status { width:100%; background:crimson; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Login view -->
+  <div id="loginView">
+    <h2>Connexion</h2>
+    <input type="email" id="email" placeholder="Email">
+    <input type="password" id="password" placeholder="Mot de passe">
+    <button id="loginBtn" class="btn">Se connecter</button>
+    <div id="loginError"></div>
+  </div>
+
+  <!-- App view -->
+  <div id="appView" style="display:none">
+    <div id="agentName">Agent</div>
+    <div id="clock">--:--:--</div>
+    <div id="statusLine">Statut : <span id="statusText">Non choisi</span></div>
+
+    <!-- Boutons de statut -->
+    <div class="buttons">
+      <button id="btnProd" class="btn-status prod">En prod</button>
+      <button id="btnPause" class="btn-status pause">Pause</button>
+      <button id="btnFormation" class="btn-status formation">Formation</button>
+      <button id="btnBrief" class="btn-status brief">Brief</button>
+    </div>
+
+    <div id="liveInfo">Choisis un statut pour démarrer le suivi.</div>
+  </div>
+</div>
+
+<!-- Bouton Déconnecté séparé -->
+<div class="logout-container" id="logoutContainer" style="display:none;">
+  <button id="btnDeco" class="btn-status deco">Déconnecté</button>
+</div>
+
+<!-- Totals bar -->
+<div id="totalsBar">
+  <div id="tProd">En prod: 00:00:00</div>
+  <div id="tPause">Pause: 00:00:00</div>
+  <div id="tFormation">Formation: 00:00:00</div>
+  <div id="tBrief">Brief: 00:00:00</div>
+  <div id="tDeco">Déconnecté: 00:00:00</div>
+</div>
+
+<script>
+/* ---------- FIREBASE ---------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyBe5yV-FujBrIDW4apossB3_3d9yw0b6EM",
+  authDomain: "js-call.firebaseapp.com",
+  projectId: "js-call",
+  storageBucket: "js-call.appspot.com",
+  messagingSenderId: "947473213289",
+  appId: "1:947473213289:web:90a4c784388b162b8c3ff8"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* ---------- DOM ---------- */
+const loginView = document.getElementById('loginView');
+const appView = document.getElementById('appView');
+const emailEl = document.getElementById('email');
+const passEl = document.getElementById('password');
+const loginBtn = document.getElementById('loginBtn');
+const loginError = document.getElementById('loginError');
+
+const agentNameEl = document.getElementById('agentName');
+const clockEl = document.getElementById('clock');
+const statusText = document.getElementById('statusText');
+const liveInfo = document.getElementById('liveInfo');
+
+const btnProd = document.getElementById('btnProd');
+const btnPause = document.getElementById('btnPause');
+const btnFormation = document.getElementById('btnFormation');
+const btnBrief = document.getElementById('btnBrief');
+const btnDeco = document.getElementById('btnDeco');
+const logoutContainer = document.getElementById('logoutContainer');
+
+const tProd = document.getElementById('tProd');
+const tPause = document.getElementById('tPause');
+const tFormation = document.getElementById('tFormation');
+const tBrief = document.getElementById('tBrief');
+const tDeco = document.getElementById('tDeco');
+
+const ALL_STATUSES = ['En prod','Pause','Formation','Brief','Déconnecté'];
+
+/* ---------- STATE ---------- */
+let dayKey = null;
+let totals = { 'En prod':0,'Pause':0,'Formation':0,'Brief':0,'Déconnecté':0 };
+let current = null;
+let elapsedTimer = null;
+let clockTimer = null;
+
+/* ---------- JOUR DÉBUTANT À 7H ---------- */
+function todayKey(d = new Date()) {
+  let day = new Date(d);
+  if (d.getHours() < 7) { // avant 7h → encore la veille
+    day.setDate(day.getDate() - 1);
+  }
+  const y = day.getFullYear();
+  const m = String(day.getMonth()+1).padStart(2,'0');
+  const dayNum = String(day.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dayNum}`;
+}
+
+function fmtHMS(s){const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;}
+function msToSec(ms){return Math.floor(ms/1000);}
+
+/* ---------- VUES ---------- */
+function showLoginView(){
+  loginView.style.display='block';
+  appView.style.display='none';
+  logoutContainer.style.display='none';
+  agentNameEl.textContent='Agent';
+  statusText.textContent='Non choisi';
+  liveInfo.textContent='Connecte-toi pour démarrer.';
+  totals = { 'En prod':0,'Pause':0,'Formation':0,'Brief':0,'Déconnecté':0 };
+  updateTotalsUI();
+  setActiveVisual(null);
+  if(elapsedTimer) clearInterval(elapsedTimer);
+}
+
+function showAppView(name){
+  loginView.style.display='none';
+  appView.style.display='block';
+  logoutContainer.style.display='block';
+  agentNameEl.textContent=name;
+}
+
+/* ---------- UI ---------- */
+function setActiveVisual(status){
+  const map={ 'En prod':btnProd, 'Pause':btnPause, 'Formation':btnFormation, 'Brief':btnBrief, 'Déconnecté':btnDeco};
+  for(const s of ALL_STATUSES){
+    const btn=map[s];
+    if(!btn) continue;
+    if(status===s){btn.classList.remove('inactive');btn.style.opacity='1';}
+    else{btn.classList.add('inactive');btn.style.opacity='0.35';}
+  }
+  if(!status) for(const s of ALL_STATUSES){map[s].classList.remove('inactive');map[s].style.opacity='1';}
+}
+
+function updateTotalsUI(){
+  const running=current?current.status:null;
+  ALL_STATUSES.forEach(s=>{
+    let sec=totals[s]||0;
+    if(running===s) sec += msToSec(Date.now()-current.start.getTime());
+    const el = (s==='En prod')?tProd:(s==='Pause')?tPause:(s==='Formation')?tFormation:(s==='Brief')?tBrief:tDeco;
+    el.textContent=`${s}: ${fmtHMS(sec)}`;
+  });
+}
+
+function startElapsedLoop(){
+  if(elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer=setInterval(()=>{
+    if(!current) return;
+    const diffMs=Date.now()-current.start.getTime();
+    statusText.textContent=`${current.status} — ${fmtHMS(msToSec(diffMs))}`;
+    updateTotalsUI();
+  },1000);
+}
+
+function startSystemClock(){
+  clockEl.textContent=new Date().toLocaleTimeString('fr-FR',{hour12:false});
+  clockTimer=setInterval(()=>{clockEl.textContent=new Date().toLocaleTimeString('fr-FR',{hour12:false});},1000);
+}
+
+/* ---------- LOGIN ---------- */
+loginBtn.addEventListener('click',async()=>{
+  loginError.style.display='none';
+  const email=emailEl.value.trim();
+  const pass=passEl.value.trim();
+  if(!email||!pass){
+    loginError.style.display='block';
+    loginError.textContent='Email et mot de passe requis.';
+    return;
+  }
+  try{
+    await auth.signInWithEmailAndPassword(email,pass);
+  }catch(err){
+    loginError.style.display='block';
+    loginError.textContent=err.message||"Erreur de connexion";
+  }
+});
+
+/* ---------- AUTH STATE ---------- */
+auth.onAuthStateChanged(async(user)=>{
+  if(user){
+    const email=user.email||'Agent';
+    const name=email.split('@')[0];
+    showAppView(name);
+    dayKey=todayKey();
+    startSystemClock();
+    startElapsedLoop();
+
+    // Récupérer les totaux depuis Firestore si existants
+    const uid = user.uid;
+    const docRef = db.collection('shifts').doc(uid).collection('days').doc(dayKey);
+    docRef.get().then(doc=>{
+      if(doc.exists && doc.data().totals){
+        totals = doc.data().totals;
+      } else {
+        totals = { 'En prod':0,'Pause':0,'Formation':0,'Brief':0,'Déconnecté':0 };
+      }
+      updateTotalsUI();
+    });
+  } else {
+    showLoginView();
+  }
+});
+
+/* ---------- STATUS ---------- */
+function setStatus(status){
+  if(current){
+    totals[current.status] += msToSec(Date.now()-current.start.getTime());
+  }
+  current={status,start:new Date()};
+  setActiveVisual(status);
+  liveInfo.textContent=`Statut actuel: ${status}`;
+  updateTotalsUI();
+
+  // Sauvegarde dans Firestore
+  const uid = auth.currentUser.uid;
+  const docRef = db.collection('shifts').doc(uid).collection('days').doc(dayKey);
+  docRef.set({ totals }, { merge:true });
+  docRef.collection('events').add({
+    status,
+    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+/* ---------- BOUTONS ---------- */
+btnProd.addEventListener('click',()=>setStatus('En prod'));
+btnPause.addEventListener('click',()=>setStatus('Pause'));
+btnFormation.addEventListener('click',()=>setStatus('Formation'));
+btnBrief.addEventListener('click',()=>setStatus('Brief'));
+btnDeco.addEventListener('click',()=>{
+  if(confirm("Voulez-vous vraiment vous déconnecter ?")) {
+    setStatus('Déconnecté');
+    auth.signOut();
+  }
+});
+</script>
+
+</body>
+</html>
